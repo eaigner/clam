@@ -15,7 +15,12 @@ func main() {
 
 	fmt.Println("loading cvds...")
 
-	err = clam.LoadCvd(path.Join(wd, "cvd"))
+	engine, err := clam.New()
+	if err != nil {
+		panic(err)
+	}
+
+	err = engine.LoadCvd(path.Join(wd, "cvd"))
 	if err != nil {
 		panic(err)
 	}
@@ -27,7 +32,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	result, err := clam.Scan(file)
+	result, err := engine.Scan(file)
 	if err != nil {
 		panic(err)
 	}
@@ -43,7 +48,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	result, err = clam.Scan(file)
+	result, err = engine.Scan(file)
 	if err != nil {
 		panic(err)
 	}
