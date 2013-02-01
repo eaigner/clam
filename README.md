@@ -1,5 +1,7 @@
 clamav bindings for Go
 
+You will need `pkg-config` and `clamav` installed to compile this package. If you are on OSX you can install those using homebrew.
+
     brew install pkgconfig
     brew install clamav
 
