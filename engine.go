@@ -25,10 +25,8 @@ import (
 type Engine interface {
 	// LoadCvd loads all virus definitions found in the specified directory
 	LoadCvd(path string) error
-
 	// Scan scans the file
 	Scan(file *os.File) (*ScanResult, error)
-
 	// Destroy destructs the engine
 	Destroy()
 }
