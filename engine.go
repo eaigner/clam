@@ -30,10 +30,15 @@ var (
 type Engine interface {
 	// LoadCvd loads all virus definitions found in the specified directory
 	LoadCvd(path string) error
+	// IsCompiled returns true if the virus definitions were already loaded and the engine compiled
+	IsCompiled() bool
 	// Scan scans the file
 	Scan(file *os.File) (*ScanResult, error)
-	// Destroy destructs the engine
-	Destroy()
+}
+
+type ScanResult struct {
+	VirusName    string
+	BytesScanned uint64
 }
 
 type engine struct {
@@ -70,7 +75,7 @@ func Clam() (Engine, error) {
 
 	// Set a finalizer
 	runtime.SetFinalizer(e, func(e2 *engine) {
-		e2.Destroy()
+		e2.destroy()
 	})
 
 	gEng = e
@@ -105,6 +110,10 @@ func (e *engine) LoadCvd(path string) error {
 	return nil
 }
 
+func (e *engine) IsCompiled() bool {
+	return e.compiled
+}
+
 func (e *engine) Scan(file *os.File) (*ScanResult, error) {
 	e.mtx.Lock()
 	defer e.mtx.Unlock()
@@ -131,20 +140,15 @@ func (e *engine) Scan(file *os.File) (*ScanResult, error) {
 	return result, nil
 }
 
-func (e *engine) Destroy() {
+func (r *ScanResult) HasVirus() bool {
+	return len(r.VirusName) > 0
+}
+
+func (e *engine) destroy() {
 	e.mtx.Lock()
 	defer e.mtx.Unlock()
 	if e.engine != nil {
 		C.cl_engine_free(e.engine)
 		e.engine = nil
 	}
-}
-
-type ScanResult struct {
-	VirusName    string
-	BytesScanned uint64
-}
-
-func (r *ScanResult) HasVirus() bool {
-	return len(r.VirusName) > 0
 }
