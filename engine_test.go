@@ -5,19 +5,14 @@ import (
 	"testing"
 )
 
-func newClam(t *testing.T) Engine {
-	engine, err := New()
+func TestScan(t *testing.T) {
+	engine, err := Clam()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := engine.LoadCvd("cvd"); err != nil {
 		t.Fatal(err)
 	}
-	return engine
-}
-
-func TestScan(t *testing.T) {
-	engine := newClam(t)
 	badFile, err := os.Open("testdata/eicar")
 	if err != nil {
 		t.Fatal(err)
@@ -39,5 +34,20 @@ func TestScan(t *testing.T) {
 	}
 	if x := result.HasVirus(); x {
 		t.Fatal(x)
+	}
+
+	// Calling Clam() for a second time must not yield error
+	engine2, err := Clam()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if engine != engine2 {
+		t.Fatal(engine, engine2)
+	}
+
+	// Calling LoadCvd() again must yield error
+	err = engine2.LoadCvd("cvd")
+	if err != ErrAlreadyCompiled {
+		t.Fatal(err)
 	}
 }

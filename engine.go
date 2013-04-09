@@ -16,10 +16,15 @@ package clam
 */
 import "C"
 import (
+	"errors"
 	"fmt"
 	"os"
 	"runtime"
 	"sync"
+)
+
+var (
+	ErrAlreadyCompiled = errors.New("engine already compiled")
 )
 
 type Engine interface {
@@ -32,52 +37,71 @@ type Engine interface {
 }
 
 type engine struct {
-	engine *C.struct_cl_engine
-	mtx    sync.Mutex
+	compiled bool
+	engine   *C.struct_cl_engine
+	mtx      sync.Mutex
 }
 
-func New() (Engine, error) {
+var (
+	gEng Engine
+	gMtx sync.Mutex
+)
+
+func Clam() (Engine, error) {
+	gMtx.Lock()
+	defer gMtx.Unlock()
+	if gEng != nil {
+		return gEng, nil
+	}
 	var ret C.int
 
-	// initialize struct
+	// Initialize struct
 	ret = C.cl_init(C.CL_INIT_DEFAULT)
 	if ret != C.CL_SUCCESS {
 		return nil, fmt.Errorf("cannot initialize clamav (%s)", C.GoString(C.cl_strerror(ret)))
 	}
 
-	// create new engine
+	// Create new engine
 	e := &engine{}
 	e.engine = C.cl_engine_new()
 	if e.engine == nil {
 		return nil, fmt.Errorf("cannot create new clamav engine")
 	}
 
-	// set a finalizer
+	// Set a finalizer
 	runtime.SetFinalizer(e, func(e2 *engine) {
 		e2.Destroy()
 	})
+
+	gEng = e
 
 	return e, nil
 }
 
 func (e *engine) LoadCvd(path string) error {
+	if e.compiled {
+		return ErrAlreadyCompiled
+	}
 	e.mtx.Lock()
 	defer e.mtx.Unlock()
 
 	var ret C.int
 	var sigs C.uint = 0
 
-	// load signatures
+	// Load signatures
 	ret = C.cl_load(C.CString(path), e.engine, &sigs, C.CL_DB_STDOPT)
 	if ret != C.CL_SUCCESS {
 		return fmt.Errorf("could not load vcds: %s", C.GoString(C.cl_strerror(ret)))
 	}
 
-	// compile engine
+	// Compile engine
 	ret = C.cl_engine_compile(e.engine)
 	if ret != C.CL_SUCCESS {
 		return fmt.Errorf("could not compile engine: %s", C.GoString(C.cl_strerror(ret)))
 	}
+
+	e.compiled = true
+
 	return nil
 }
 
