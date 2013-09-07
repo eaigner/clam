@@ -7,44 +7,23 @@ You will need `pkg-config` and `clamav` installed to compile this package. If yo
 
 ## Example
 
-    package main
+    engine := clam.New()
 
-    import (
-      "fmt"
-      "github.com/eaigner/clam"
-      "os"
-      "path"
-    )
-
-    func main() {
-      wd, err := os.Getwd()
-      if err != nil {
-        panic(err)
-      }
-
-      // create a clamav engine
-      engine, err := clam.New()
-      if err != nil {
-        panic(err)
-      }
-
-      // load directory with cvd virus definitions
-      err = engine.LoadCvd(path.Join(wd, "cvd"))
-      if err != nil {
-        panic(err)
-      }
-
-      // scan file that contains virus
-      file, err := os.Open("eicar")
-      if err != nil {
-        panic(err)
-      }
-      result, err := engine.Scan(file)
-      if err != nil {
-        panic(err)
-      }
-      if result.HasVirus() {
-        fmt.Println("virus detected!", result.VirusName)
-      }
-      fmt.Printf("scanned %d bytes\n", result.BytesScanned)
+    err = engine.Compile("cvd")
+    if err != nil {
+      panic(err)
     }
+
+    // Scan file that contains virus
+    file, err := os.Open("eicar")
+    if err != nil {
+      panic(err)
+    }
+
+    // If a virus is found a VirusError is returned
+    err = engine.Scan(file)
+    if err != nil {
+      fmt.Println("virus found:", err)
+    }
+
+    // If you want to refresh the engine, call Destroy() and recompile with Compile()
