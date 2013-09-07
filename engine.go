@@ -21,6 +21,7 @@ import (
 	"os"
 	"runtime"
 	"sync"
+	"sync/atomic"
 )
 
 var (
@@ -28,73 +29,60 @@ var (
 )
 
 type Engine interface {
-	// LoadCvd loads all virus definitions found in the specified directory
-	LoadCvd(path string) error
-	// IsCompiled returns true if the virus definitions were already loaded and the engine compiled
+	// Compile compiles the engine using the virus definitions in cvdDir.
+	Compile(cvdDir string) error
+
+	// IsCompiled returns true if then engine is compiled.
 	IsCompiled() bool
-	// Scan scans the file
-	Scan(file *os.File) (*ScanResult, error)
+
+	// Scan scans the file for viruses, returns error if virus is found.
+	Scan(file *os.File) error
+
+	// Destroy destroys the engine.
+	Destroy()
 }
 
-type ScanResult struct {
-	VirusName    string
-	BytesScanned uint64
+func init() {
+	// Prepare libclamav
+	var ret C.int
+	ret = C.cl_init(C.CL_INIT_DEFAULT)
+	if ret != C.CL_SUCCESS {
+		panic("cannot initialize clamav:" + C.GoString(C.cl_strerror(ret)))
+	}
 }
 
-type engine struct {
-	compiled bool
+func New() Engine {
+	e := &clEngine{}
+	runtime.SetFinalizer(e, func(e2 *clEngine) {
+		e2.Destroy()
+	})
+	return e
+}
+
+type clEngine struct {
+	compiled int32
 	engine   *C.struct_cl_engine
 	mtx      sync.Mutex
 }
 
-var (
-	gEng Engine
-	gMtx sync.Mutex
-)
-
-func Clam() (Engine, error) {
-	gMtx.Lock()
-	defer gMtx.Unlock()
-	if gEng != nil {
-		return gEng, nil
-	}
-	var ret C.int
-
-	// Initialize struct
-	ret = C.cl_init(C.CL_INIT_DEFAULT)
-	if ret != C.CL_SUCCESS {
-		return nil, fmt.Errorf("cannot initialize clamav (%s)", C.GoString(C.cl_strerror(ret)))
-	}
-
-	// Create new engine
-	e := &engine{}
-	e.engine = C.cl_engine_new()
-	if e.engine == nil {
-		return nil, fmt.Errorf("cannot create new clamav engine")
-	}
-
-	// Set a finalizer
-	runtime.SetFinalizer(e, func(e2 *engine) {
-		e2.destroy()
-	})
-
-	gEng = e
-
-	return e, nil
-}
-
-func (e *engine) LoadCvd(path string) error {
-	if e.compiled {
-		return ErrAlreadyCompiled
-	}
+func (e *clEngine) Compile(cvdDir string) error {
 	e.mtx.Lock()
 	defer e.mtx.Unlock()
 
-	var ret C.int
-	var sigs C.uint = 0
+	if e.IsCompiled() {
+		return ErrAlreadyCompiled
+	}
+
+	// Create new engine
+	e.engine = C.cl_engine_new()
+	if e.engine == nil {
+		return errors.New("failed to create new clamav engine")
+	}
 
 	// Load signatures
-	ret = C.cl_load(C.CString(path), e.engine, &sigs, C.CL_DB_STDOPT)
+	var ret C.int
+	var sigs C.uint = 0
+	ret = C.cl_load(C.CString(cvdDir), e.engine, &sigs, C.CL_DB_STDOPT)
 	if ret != C.CL_SUCCESS {
 		return fmt.Errorf("could not load vcds: %s", C.GoString(C.cl_strerror(ret)))
 	}
@@ -105,16 +93,16 @@ func (e *engine) LoadCvd(path string) error {
 		return fmt.Errorf("could not compile engine: %s", C.GoString(C.cl_strerror(ret)))
 	}
 
-	e.compiled = true
+	atomic.StoreInt32(&e.compiled, 1)
 
 	return nil
 }
 
-func (e *engine) IsCompiled() bool {
-	return e.compiled
+func (e *clEngine) IsCompiled() bool {
+	return (atomic.LoadInt32(&e.compiled) == 1)
 }
 
-func (e *engine) Scan(file *os.File) (*ScanResult, error) {
+func (e *clEngine) Scan(file *os.File) error {
 	e.mtx.Lock()
 	defer e.mtx.Unlock()
 
@@ -123,32 +111,40 @@ func (e *engine) Scan(file *os.File) (*ScanResult, error) {
 	var virname *C.char
 	var size C.ulong = 0
 
-	// scan file
-	result := &ScanResult{}
+	// Scan file
+	var virName string
 	ret = C.cl_scandesc(fd, &virname, &size, e.engine, C.CL_SCAN_STDOPT)
 	if ret == C.CL_VIRUS {
-		result.VirusName = C.GoString(virname)
+		virName = C.GoString(virname)
 	} else if ret == C.CL_CLEAN {
 		// do nothing
 	} else {
-		return nil, fmt.Errorf("error: %s", C.GoString(C.cl_strerror(ret)))
+		return fmt.Errorf("error scanning file: %s", C.GoString(C.cl_strerror(ret)))
 	}
-
-	// get scanned bytes
-	result.BytesScanned = uint64(size * C.CL_COUNT_PRECISION)
-
-	return result, nil
+	if len(virName) > 0 {
+		return &VirusError{
+			VirusName:    virName,
+			BytesScanned: uint64(size * C.CL_COUNT_PRECISION),
+		}
+	}
+	return nil
 }
 
-func (r *ScanResult) HasVirus() bool {
-	return len(r.VirusName) > 0
-}
-
-func (e *engine) destroy() {
+func (e *clEngine) Destroy() {
 	e.mtx.Lock()
 	defer e.mtx.Unlock()
 	if e.engine != nil {
 		C.cl_engine_free(e.engine)
 		e.engine = nil
+		e.compiled = 0
 	}
+}
+
+type VirusError struct {
+	VirusName    string
+	BytesScanned uint64
+}
+
+func (e *VirusError) Error() string {
+	return fmt.Sprintf("found virus %s", e.VirusName)
 }
